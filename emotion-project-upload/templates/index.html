@@ -1,0 +1,483 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Emotion Music Player</title>
+
+    <style>
+        body {
+            margin: 0;
+            font-family: 'Segoe UI', sans-serif;
+            background: linear-gradient(135deg, #E3F2FD, #FCE4EC);
+            color: #222;
+            height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            transition: background 0.8s ease;
+        }
+
+        .container {
+            position: relative;
+            width: 90%;
+            max-width: 800px;
+            padding: 25px;
+            border-radius: 20px;
+            background: rgba(255,255,255,0.6);
+            backdrop-filter: blur(15px);
+            box-shadow: 0 8px 30px rgba(0,0,0,0.1);
+            text-align: center;
+        }
+
+        #modeBtn {
+            position: absolute;
+            top: 15px;
+            right: 15px;
+            padding: 8px 16px;
+            border-radius: 10px;
+            border: none;
+            cursor: pointer;
+            color: white;
+            background: linear-gradient(135deg, #26c6da, #7e57c2);
+        }
+
+        .main-row {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            gap: 30px;
+            margin-top: 20px;
+        }
+
+        .left-panel {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+
+        #visualizer {
+            width: 280px;
+            height: 100px;
+            border-radius: 10px;
+            background: rgba(0,0,0,0.05);
+            margin-bottom: 10px;
+        }
+
+        button {
+            padding: 10px 18px;
+            border-radius: 10px;
+            border: none;
+            margin: 6px;
+            cursor: pointer;
+            color: white;
+            background: linear-gradient(135deg, #42a5f5, #7e57c2);
+        }
+
+        #musicBtn {
+            background: linear-gradient(135deg, #ef5350, #ab47bc);
+        }
+
+        .right-panel img {
+            border-radius: 15px;
+            width: 320px;
+            box-shadow: 0 10px 25px rgba(0,0,0,0.15);
+        }
+
+        #emotion {
+            margin-top: 15px;
+            font-weight: bold;
+        }
+
+        #song {
+            margin-top: 5px;
+            font-size: 15px;
+        }
+    </style>
+</head>
+
+<body>
+
+<div class="container">
+
+<button id="modeBtn" onclick="toggleMode()">⚡ Fast Mode</button>
+
+<h1>🎧 Emotion Music System</h1>
+
+<div class="main-row">
+
+    <div class="left-panel">
+        <canvas id="visualizer"></canvas>
+
+        <button onclick="toggleNight()">🌙 Night Vision</button>
+        <button onclick="toggleMusic()" id="musicBtn">🔊 Music ON</button>
+    </div>
+
+    <div class="right-panel">
+        <img src="/video_feed">
+    </div>
+
+</div>
+
+<h2 id="emotion">Analyzing...</h2>
+<h3 id="song">🎵 No song playing</h3>
+
+<audio id="player" controls style="width:300px;"></audio>
+
+<div>
+    <button onclick="playPrevSong()">⏮ Prev</button>
+    <button onclick="playNextSong()">⏭ Next</button>
+</div>
+
+</div>
+
+<script>
+// =========================
+// STATE
+// =========================
+let mode = "FAST";
+
+let currentEmotion = "";
+let baseEmotion = null;
+
+let emotionBuffer = [];
+let TIME_WINDOW = 15000;
+
+let isTransitioning = false;
+
+let player = document.getElementById("player");
+let playlistQueue = [];
+let currentIndex = 0;
+let musicEnabled = true;
+
+let bufferEmotion = null;
+
+// ✅ AUTO NEXT
+player.onended = () => {
+    playNextSong();
+};
+
+// =========================
+// RESET
+// =========================
+function resetSystem() {
+    baseEmotion = null;
+    emotionBuffer = [];
+    currentEmotion = "";
+    isTransitioning = false;
+
+    player.pause();
+    player.src = "";
+
+    document.getElementById("song").innerText = "🎵 Resetting...";
+}
+
+// =========================
+// MODE
+// =========================
+async function toggleMode() {
+    if (mode === "FAST") {
+        mode = "REAL";
+        document.getElementById("modeBtn").innerText = "🧠 Real Mode";
+    } else {
+        mode = "FAST";
+        document.getElementById("modeBtn").innerText = "⚡ Fast Mode";
+    }
+
+    resetSystem();
+
+    await fetch("/set_mode", {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({mode: mode})
+    });
+}
+
+// =========================
+// COLORS
+// =========================
+const emotionColors = {
+    happy: ["#FFF3CD", "#FFE0B2"],
+    neutral: ["#E3F2FD", "#FCE4EC"],
+    sad: ["#EDE7F6", "#D1C4E9"],
+    angry: ["#FFCDD2", "#F8BBD0"],
+    surprise: ["#E0F2F1", "#B2DFDB"],
+    fear: ["#ECEFF1", "#CFD8DC"],
+    disgust: ["#F1F8E9", "#DCEDC8"]
+};
+
+function applyEmotionTheme(emotion) {
+    if (!emotionColors[emotion]) return;
+    let [c1, c2] = emotionColors[emotion];
+    document.body.style.background =
+        `linear-gradient(135deg, ${c1}, ${c2})`;
+}
+
+// =========================
+// PLAYLIST
+// =========================
+async function loadPlaylist(emotion) {
+    let res = await fetch(`/playlist/${emotion}`);
+    let list = await res.json();
+
+    if (!list || list.length === 0) return;
+
+    playlistQueue = list.sort(() => Math.random() - 0.5);
+    currentIndex = 0;
+}
+
+function playCurrentSong() {
+    if (!musicEnabled) return;
+
+    let song = playlistQueue[currentIndex];
+    document.getElementById("song").innerText =
+        `🎵 Now Playing: ${song}`;
+
+    player.src = `/music/${currentEmotion}/${song}`;
+    player.load();
+    player.volume = 0;
+
+    player.play().catch(()=>{});
+    fadeAudio(player, 1);
+
+    if (!audioCtx) setupVisualizer();
+}
+
+function playNextSong() {
+    if (playlistQueue.length === 0) return;
+
+    currentIndex = (currentIndex + 1) % playlistQueue.length;
+    playCurrentSong();
+}
+
+function playPrevSong() {
+    if (playlistQueue.length === 0) return;
+
+    currentIndex =
+        (currentIndex - 1 + playlistQueue.length) % playlistQueue.length;
+
+    playCurrentSong();
+}
+
+function fadeAudio(audio, target, duration=700) {
+    let steps = 20;
+    let diff = (target - audio.volume) / steps;
+
+    let i = 0;
+    let fade = setInterval(()=>{
+        audio.volume += diff;
+        i++;
+        if(i>=steps){
+            audio.volume = target;
+            clearInterval(fade);
+        }
+    }, duration/steps);
+}
+
+// =========================
+// BUFFER
+// =========================
+function processBuffer() {
+
+    let stats = {};
+
+    for (let e of emotionBuffer) {
+        if (e.emotion === "neutral") continue;
+        stats[e.emotion] = (stats[e.emotion] || 0) + 1;
+    }
+
+    let dominant = null;
+    let max = 0;
+
+    for (let emo in stats) {
+        if (stats[emo] > max) {
+            max = stats[emo];
+            dominant = emo;
+        }
+    }
+
+    let total = emotionBuffer.length;
+
+    return {
+        dominant: dominant,
+        strength: max,
+        total: total
+    };
+}
+
+// =========================
+// MAIN
+// =========================
+async function fetchEmotion() {
+    try {
+        let res = await fetch("/emotion");
+        let data = await res.json();
+
+        let detected = data.emotion;
+        let live = data.live;
+
+        if (detected === "no_face" || detected === "analyzing") return;
+        if (isTransitioning) return;
+
+        // FAST MODE
+        if (mode === "FAST") {
+
+            document.getElementById("emotion").innerText =
+                `LIVE: ${live} | MODE: FAST`;
+
+            if (detected !== currentEmotion) {
+
+                currentEmotion = detected;
+                applyEmotionTheme(detected);
+
+                isTransitioning = true;
+
+                fadeAudio(player, 0, 400);
+
+                setTimeout(async () => {
+                    await loadPlaylist(detected);
+                    playCurrentSong();
+
+                    setTimeout(()=> isTransitioning = false, 400);
+                }, 400);
+            }
+
+            return;
+        }
+
+        // REAL MODE
+
+        emotionBuffer.push({
+            emotion: detected,
+            time: Date.now()
+        });
+
+        let now = Date.now();
+        emotionBuffer = emotionBuffer.filter(e =>
+            now - e.time <= TIME_WINDOW
+        );
+
+        let result = processBuffer();
+        if (!result.dominant) return;
+
+        bufferEmotion = result.dominant;
+
+        document.getElementById("emotion").innerText =
+            `LIVE: ${live} | BUFFER: ${bufferEmotion} | MODE: REAL`;
+
+        let confidence = result.strength / result.total;
+        if (confidence < 0.6) return;
+
+        if (!baseEmotion) {
+
+            baseEmotion = result.dominant;
+            currentEmotion = result.dominant;
+
+            applyEmotionTheme(result.dominant);
+
+            await loadPlaylist(result.dominant);
+            playCurrentSong();
+
+            return;
+        }
+
+        if (
+            result.dominant !== baseEmotion &&
+            !isTransitioning
+        ) {
+
+            baseEmotion = result.dominant;
+            currentEmotion = result.dominant;
+
+            applyEmotionTheme(result.dominant);
+
+            isTransitioning = true;
+
+            fadeAudio(player, 0, 800);
+
+            setTimeout(async () => {
+
+                await loadPlaylist(result.dominant);
+                playCurrentSong();
+
+                setTimeout(()=> {
+                    isTransitioning = false;
+                }, 800);
+
+            }, 800);
+        }
+
+    } catch(err){
+        console.log(err);
+    }
+}
+
+// =========================
+// VISUALIZER
+// =========================
+let audioCtx, analyser, source, dataArray;
+
+function setupVisualizer() {
+    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    analyser = audioCtx.createAnalyser();
+
+    source = audioCtx.createMediaElementSource(player);
+    source.connect(analyser);
+    analyser.connect(audioCtx.destination);
+
+    analyser.fftSize = 64;
+    dataArray = new Uint8Array(analyser.frequencyBinCount);
+
+    drawVisualizer();
+}
+
+function drawVisualizer() {
+    const canvas = document.getElementById("visualizer");
+    const ctx = canvas.getContext("2d");
+
+    function draw() {
+        requestAnimationFrame(draw);
+
+        analyser.getByteFrequencyData(dataArray);
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+        let barWidth = canvas.width / dataArray.length;
+
+        for (let i = 0; i < dataArray.length; i++) {
+            let h = dataArray[i];
+            ctx.fillStyle = `rgb(${h},120,200)`;
+            ctx.fillRect(i * barWidth, canvas.height - h, barWidth - 2, h);
+        }
+    }
+
+    draw();
+}
+
+// =========================
+// CONTROLS
+// =========================
+function toggleNight() {
+    fetch("/toggle_night");
+}
+
+function toggleMusic() {
+    musicEnabled = !musicEnabled;
+
+    let btn = document.getElementById("musicBtn");
+
+    if (!musicEnabled) {
+        player.pause();
+        btn.innerText = "🔇 Music OFF";
+    } else {
+        player.play().catch(()=>{});
+        btn.innerText = "🔊 Music ON";
+    }
+}
+
+// =========================
+// LOOP
+// =========================
+setInterval(fetchEmotion, 1500);
+
+</script>
+
+</body>
+</html>
